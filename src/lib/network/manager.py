@@ -27,6 +27,14 @@ from src.lib.network.turbo import load_autodl_turbo
 from src.lib.network.mirror import load_hf_mirror
 from src.lib.network.token import load_api_tokens
 from src.lib.network.proxy import ProxyConfig, MihomoBackend
+from src.lib.network.state import (
+    get_cached_network_decision,
+    cache_network_decision,
+    is_subscription_recently_failed,
+    mark_subscription_failed,
+    mark_subscription_success,
+    invalidate_cache,
+)
 
 logger = logging.getLogger("autodl_setup")
 
@@ -201,21 +209,27 @@ class NetworkManager:
         logger.debug(f"  -> 配置已备份到: {backup_dir}")
 
     def _setup_proxy(self, verbose: bool) -> None:
-        """代理初始化
+        """代理初始化 (带状态缓存加速)
 
         策略:
-          1. 有 mihomo 配置 → 先用 turbo 引导下载，再切到 mihomo
-          2. 没有 mihomo 配置 → 直接用 turbo 兜底
+          1. 快速路径: 检查跨进程缓存，如果上次决策仍有效则直接复用
+          2. 有 mihomo 配置 → 先用 turbo 引导下载，再切到 mihomo
+          3. 没有 mihomo 配置 → 直接用 turbo 兜底
 
         配置来源优先级:
           1. backup 目录已有配置（手动上传 / 上次持久化）→ 恢复到运行时目录
           2. subscription_url 在线下载 → 下载后备份到 backup 目录
         """
+        # ── 快速路径: 尝试复用上次的网络决策 ──
+        if self._try_fast_path(verbose):
+            return
+
         config = _build_proxy_config()
 
         if config is None:
             # 没有配置 mihomo，用 turbo 兜底
             load_autodl_turbo(verbose)
+            cache_network_decision("turbo")
             return
 
         if verbose:
@@ -231,17 +245,38 @@ class NetworkManager:
             if verbose:
                 logger.warning("  -> [WARN] mihomo 安装失败，回退到 AutoDL 学术加速")
             load_autodl_turbo(verbose)
+            cache_network_decision("turbo")
             return
 
         # 从 backup 恢复配置到 /etc/mihomo/
         self._restore_from_backup(config)
 
-        # 下载/更新订阅（如果 backup 已有配置且无 subscription_url，会直接复用）
-        if not backend.update_subscription():
+        # 订阅更新 — 利用失败缓存避免重复尝试
+        if is_subscription_recently_failed():
+            if verbose:
+                logger.info("  -> 订阅近期更新失败，跳过重试 (30 分钟内自动重置)")
+            # 检查是否有可用的本地配置可以继续
+            config_file = config.config_dir / "config.yaml"
+            if not (config_file.exists() and config_file.stat().st_size > 100):
+                if verbose:
+                    logger.warning("  -> [WARN] 无可用本地配置，回退到 AutoDL 学术加速")
+                load_autodl_turbo(verbose)
+                cache_network_decision("turbo")
+                return
+            # 有本地配置，修补后继续启动 mihomo
+            from src.lib.network.proxy.config import patch_config
+            patch_config(config, config_file)
+        elif not backend.update_subscription():
+            # 订阅更新首次失败，写入失败标记
+            mark_subscription_failed()
             if verbose:
                 logger.warning("  -> [WARN] 订阅更新失败，回退到 AutoDL 学术加速")
             load_autodl_turbo(verbose)
+            cache_network_decision("turbo")
             return
+        else:
+            # 订阅更新成功，清除失败标记
+            mark_subscription_success()
 
         # 启动成功前的配置已经就绪，备份一份到 backup
         self._backup_config(config)
@@ -251,6 +286,7 @@ class NetworkManager:
             if verbose:
                 logger.warning("  -> [WARN] mihomo 启动失败，回退到 AutoDL 学术加速")
             load_autodl_turbo(verbose)
+            cache_network_decision("turbo")
             return
 
         # 健康检查
@@ -263,8 +299,60 @@ class NetworkManager:
 
         # 切换环境变量到 mihomo（覆盖 turbo）
         _inject_proxy_env(config.proxy_url)
+        cache_network_decision("mihomo")
 
         self._backend = backend
+
+    def _try_fast_path(self, verbose: bool) -> bool:
+        """快速路径: 利用跨进程缓存复用上次的网络决策
+
+        当另一个进程（如 main.py 的 setup）已经完成网络初始化后，
+        后续短生命周期进程（如 model download）可以直接复用决策结果，
+        跳过耗时的 mihomo 安装→订阅→启动→健康检查流程。
+
+        快速路径条件:
+          - 缓存未过期
+          - 决策为 "turbo" → 直接加载 turbo 即可
+          - 决策为 "mihomo" → 检查 mihomo 进程是否还在运行
+
+        Returns:
+            True 表示快速路径命中，已完成代理初始化
+        """
+        cached = get_cached_network_decision()
+        if cached is None:
+            return False
+
+        if cached == "turbo":
+            # 上次决策是 turbo，直接加载
+            load_autodl_turbo(verbose)
+            if verbose:
+                logger.debug("  -> [快速路径] 复用 turbo 决策缓存")
+            return True
+
+        if cached == "mihomo":
+            # 上次决策是 mihomo，检查进程是否仍在运行
+            config = _build_proxy_config()
+            if config is None:
+                # 配置已被删除，缓存失效
+                invalidate_cache()
+                return False
+
+            backend = MihomoBackend(config)
+            if backend.is_running():
+                # mihomo 进程仍在运行，直接注入环境变量
+                _inject_proxy_env(config.proxy_url)
+                self._backend = backend
+                if verbose:
+                    logger.info(
+                        f"  -> ✓ mihomo 代理已就绪 (Proxy: {config.proxy_url})"
+                    )
+                return True
+            else:
+                # mihomo 进程已退出，缓存失效，需要完整重启
+                invalidate_cache()
+                return False
+
+        return False
 
     def stop_proxy(self) -> None:
         """停止代理进程（供关机/清理时调用）"""

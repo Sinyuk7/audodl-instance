@@ -22,5 +22,6 @@ Network Environment Manager - 网络环境统一管理
 - src/lib/download/secrets.yaml         (API Token)
 """
 from src.lib.network.manager import setup_network, export_env_shell, stop_proxy, sync_proxy_config
+from src.lib.network.state import invalidate_cache as invalidate_network_cache
 
-__all__ = ["setup_network", "export_env_shell", "stop_proxy", "sync_proxy_config"]
+__all__ = ["setup_network", "export_env_shell", "stop_proxy", "sync_proxy_config", "invalidate_network_cache"]

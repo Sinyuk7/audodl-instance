@@ -14,7 +14,7 @@ from src.core.interface import AppContext, BaseAddon
 from src.core.adapters import SubprocessRunner, FileStateManager
 from src.core.artifacts import Artifacts
 from src.core.utils import setup_logger, logger, kill_process_by_name
-from src.lib.network import setup_network, sync_proxy_config
+from src.lib.network import setup_network, sync_proxy_config, invalidate_network_cache
 
 # 插件导入
 from src.addons.system.plugin import SystemAddon
@@ -193,6 +193,11 @@ def main() -> None:
 
     # 清理残留进程
     kill_process_by_name("python.*src.main", exclude_pid=os.getpid())
+
+    # setup 动作时清除网络状态缓存，确保走完整初始化流程
+    # 其他动作（start/sync）以及独立 CLI（model download）则复用缓存
+    if args.action == "setup":
+        invalidate_network_cache()
 
     # 初始化网络环境 (代理 + 镜像 + Token)
     setup_network()
