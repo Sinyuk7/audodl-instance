@@ -13,15 +13,14 @@ def main() -> None:
     output = export_env_shell()
     if output:
         print(output)
-        # 输出 echo 语句让用户看到（stdout 被 eval 消费）
+        # 提示信息直接输出到 stderr，不经过 eval
         proxy = os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY")
         if proxy:
-            # 用 stderr 输出提示信息，避免被 eval 解析
-            print(f"echo '[turbo] Proxy: {proxy}' >&2", flush=True)
+            print(f"[turbo] Proxy: {proxy}", file=sys.stderr)
         else:
-            print("echo '[turbo] No proxy' >&2", flush=True)
+            print("[turbo] No proxy", file=sys.stderr)
     else:
-        print("echo '[turbo] No network config found' >&2", flush=True)
+        print("[turbo] No network config found", file=sys.stderr)
 
 
 if __name__ == "__main__":
