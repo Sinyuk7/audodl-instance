@@ -27,33 +27,6 @@ import shutil
 from pathlib import Path
 
 # ============================================================
-# 启动脚本模板
-# ============================================================
-
-LAUNCHER_SCRIPT = '''#!/bin/bash
-# RAG 本地检索工具
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# 尝试寻找 conda
-if command -v conda &> /dev/null; then
-    CONDA_CMD="conda"
-elif [ -f "/usr/local/Caskroom/miniforge/base/bin/conda" ]; then
-    CONDA_CMD="/usr/local/Caskroom/miniforge/base/bin/conda"
-elif [ -f "$HOME/miniforge3/bin/conda" ]; then
-    CONDA_CMD="$HOME/miniforge3/bin/conda"
-elif [ -f "$HOME/miniconda3/bin/conda" ]; then
-    CONDA_CMD="$HOME/miniconda3/bin/conda"
-else
-    echo "❌ 未找到 conda 命令，请确保已安装 conda/miniforge"
-    exit 1
-fi
-
-cd "$SCRIPT_DIR"
-# 使用 conda run 执行，避免硬编码 python 绝对路径
-exec "$CONDA_CMD" run -n rag-env python rag_search.py "$@"
-'''
-
-# ============================================================
 # 安装逻辑
 # ============================================================
 
@@ -113,41 +86,74 @@ def setup_conda_env():
     return True
 
 def install_rag_files(target_dir: Path):
-    """安装 RAG 文件到目标目录"""
+    """配置 RAG 环境并生成启动脚本"""
     target_dir = Path(target_dir).resolve()
     source_dir = Path(__file__).parent.resolve()
     
-    print(f"\n📁 安装 RAG 到: {target_dir}")
+    print(f"\n📁 配置 RAG 环境，项目根目录: {target_dir}")
     
-    # 复制核心文件
-    for filename in ["rag_indexer.py", "rag_search.py"]:
-        src_file = source_dir / filename
-        dst_file = target_dir / filename
-        if src_file.exists():
-            if src_file != dst_file:
-                shutil.copy2(src_file, dst_file)
-            print(f"  ✅ 复制: {filename}")
-        else:
-            print(f"  ❌ 找不到源文件: {src_file}")
+    # 计算 rag 目录相对于项目根目录的路径
+    try:
+        rel_rag_dir = source_dir.relative_to(target_dir)
+        rag_script_path = f"$PROJECT_ROOT/{rel_rag_dir}/rag_search.py"
+    except ValueError:
+        # 如果 rag 目录不在项目根目录下，使用绝对路径
+        rag_script_path = str(source_dir / "rag_search.py")
+    
+    # 动态生成启动脚本
+    launcher_content = f'''#!/bin/bash
+# RAG 本地检索工具
+PROJECT_ROOT="$(cd "$(dirname "${{BASH_SOURCE[0]}}")" && pwd)"
+
+# 尝试寻找 conda
+if command -v conda &> /dev/null; then
+    CONDA_CMD="conda"
+elif [ -f "/usr/local/Caskroom/miniforge/base/bin/conda" ]; then
+    CONDA_CMD="/usr/local/Caskroom/miniforge/base/bin/conda"
+elif [ -f "$HOME/miniforge3/bin/conda" ]; then
+    CONDA_CMD="$HOME/miniforge3/bin/conda"
+elif [ -f "$HOME/miniconda3/bin/conda" ]; then
+    CONDA_CMD="$HOME/miniconda3/bin/conda"
+else
+    echo "❌ 未找到 conda 命令，请确保已安装 conda/miniforge"
+    exit 1
+fi
+
+cd "$PROJECT_ROOT"
+# 使用 conda run 执行，指向正确的 rag_search.py 路径
+exec "$CONDA_CMD" run -n rag-env python "{rag_script_path}" "$@"
+'''
     
     # 创建启动脚本
-    launcher_path = target_dir / "rag"
-    launcher_path.write_text(LAUNCHER_SCRIPT.strip() + "\n")
+    launcher_path = target_dir / "rag_search"
+    launcher_path.write_text(launcher_content)
     os.chmod(launcher_path, 0o755)
-    print("  ✅ 创建: rag (启动脚本)")
+    print("  ✅ 创建: rag_search (启动脚本)")
     
     # 更新 .gitignore
     gitignore = target_dir / ".gitignore"
-    ignore_entry = ".rag_index/"
+    ignore_entries = [
+        ".rag_index/",
+        "rag/__pycache__/"
+    ]
     
     if gitignore.exists():
         content = gitignore.read_text()
-        if ignore_entry not in content:
-            with open(gitignore, "a") as f:
-                f.write(f"\n# RAG 索引缓存\n{ignore_entry}\n")
-            print("  ✅ 更新: .gitignore")
+        added_any = False
+        with open(gitignore, "a") as f:
+            for entry in ignore_entries:
+                if entry not in content:
+                    if not added_any:
+                        f.write("\n# RAG 索引与缓存\n")
+                        added_any = True
+                    f.write(f"{entry}\n")
+        if added_any:
+            print("  ✅ 更新: .gitignore (添加 RAG 忽略项)")
     else:
-        gitignore.write_text(f"# RAG 索引缓存\n{ignore_entry}\n")
+        with open(gitignore, "w") as f:
+            f.write("# RAG 索引与缓存\n")
+            for entry in ignore_entries:
+                f.write(f"{entry}\n")
         print("  ✅ 创建: .gitignore")
 
 def main():
@@ -176,7 +182,7 @@ def main():
     print("=" * 60)
     print("\n使用方法:")
     print(f"  cd {target_dir}")
-    print("  ./rag")
+    print("  ./rag_search")
     print("\n首次运行会自动构建索引（约 1-2 分钟）")
     print("之后使用 'update' 命令进行增量更新")
     print("=" * 60)

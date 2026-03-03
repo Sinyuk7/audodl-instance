@@ -70,6 +70,17 @@ class RAGIndexer:
         """延迟加载模型"""
         if self.model is None:
             try:
+                import logging
+                import warnings
+                
+                # 抑制 transformers 和 huggingface 的烦人日志与警告
+                os.environ["TOKENIZERS_PARALLELISM"] = "false"
+                os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
+                logging.getLogger("transformers").setLevel(logging.ERROR)
+                logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                warnings.filterwarnings("ignore", category=UserWarning)
+                
                 from sentence_transformers import SentenceTransformer
             except ImportError:
                 raise ImportError(
@@ -308,7 +319,8 @@ class RAGIndexer:
         if extensions is None:
             extensions = ['.md', '.py', '.txt', '.yaml', '.yml', '.json']
         if exclude_dirs is None:
-            exclude_dirs = ['.git', '__pycache__', 'node_modules', '.rag_index', 'venv', '.venv']
+            # 默认排除 rag 自身目录，防止污染索引
+            exclude_dirs = ['.git', '__pycache__', 'node_modules', '.rag_index', 'venv', '.venv', 'rag']
         
         directory = Path(directory).resolve()
         git_root = self._get_git_root(directory)
@@ -624,7 +636,8 @@ class RAGIndexer:
         if extensions is None:
             extensions = ['.md', '.py', '.txt', '.yaml', '.yml', '.json']
         if exclude_dirs is None:
-            exclude_dirs = ['.git', '__pycache__', 'node_modules', '.rag_index', 'venv', '.venv']
+            # 默认排除 rag 自身目录，防止污染索引
+            exclude_dirs = ['.git', '__pycache__', 'node_modules', '.rag_index', 'venv', '.venv', 'rag']
         
         self._ensure_model()
         
