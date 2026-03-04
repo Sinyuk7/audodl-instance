@@ -117,9 +117,6 @@ env/
 # VS Code
 .vscode/
 
-# AI Assistant / Spec 工具 (本地配置)
-.codemaker/
-openspec/
 
 # IDEA
 *.iml
