@@ -2,8 +2,12 @@
 Lock 文件管理
 
 管理 model-lock.yaml 模型快照。
-快照在 sync 时通过扫描 shared_models 目录生成，
+快照在 sync 时通过扫描 models 目录生成，
 记录当前所有模型文件的路径、哈希、类型及来源信息。
+
+目录结构（采用软链接方案后）:
+  /root/ComfyUI/models/ → 软链接 → /root/autodl-tmp/models/
+  扫描的是 /root/autodl-tmp/models/ (实际存储位置)
 """
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,12 +58,12 @@ def write_meta(model_path: Path, meta: Dict[str, Any]) -> None:
 
 
 def scan_models(models_base: Path) -> List[Dict[str, Any]]:
-    """扫描 shared_models 目录下的所有模型文件
+    """扫描 models 目录下的所有模型文件
 
     递归扫描 models_base 下所有子目录，收集模型文件信息。
 
     Args:
-        models_base: 模型根目录 (shared_models/)
+        models_base: 模型根目录 (/root/autodl-tmp/models/)
 
     Returns:
         模型文件信息列表 (不含 hash，hash 由 generate_snapshot 增量计算)

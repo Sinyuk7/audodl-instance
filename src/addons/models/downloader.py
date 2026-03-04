@@ -28,7 +28,7 @@ from src.lib.utils import load_yaml, format_size
 from src.addons.models.config import (
     PRESETS_FILE,
     get_models_base,
-    get_type_dir_mapping,
+    get_available_types,
     resolve_type_to_dir,
     LOCK_FILE,
 )
@@ -124,19 +124,24 @@ def cmd_status() -> None:
 # ============================================================
 def cmd_types() -> None:
     """显示可用的模型类型 (使用 Rich 美化)"""
-    mapping = get_type_dir_mapping()
+    available = get_available_types()
+    
+    if not available:
+        ui.print_info("模型目录为空，暂无可用类型")
+        ui.print_info("下载模型时可以指定任意类型/路径，目录会自动创建")
+        return
     
     rows: List[List[str]] = []
-    for mtype, mdir in sorted(mapping.items()):
-        rows.append([mtype, mdir])
+    for mtype in available:
+        rows.append([mtype, f"{mtype}/"])
     
     ui.print_table(
-        title="可用模型类型",
-        columns=["类型名", "目标目录"],
+        title="可用模型类型（扫描自模型目录）",
+        columns=["类型名", "目录"],
         rows=rows,
     )
     
-    ui.print_info("也可以直接使用子目录路径，如: clip/flux, unet/flux")
+    ui.print_info("下载时也可以使用任意子目录路径，如: LLM/Qwen-VL")
 
 
 # ============================================================
@@ -234,11 +239,11 @@ def cmd_download_interactive(url: str) -> None:
         if new_filename:
             filename = new_filename
     
-    # ========== Step 3: 选择模型类型 ==========
-    available_types = list(get_type_dir_mapping().keys())
+    # ========== Step 3: 选择模型类型/目录 ==========
+    available_types = get_available_types()
     
-    if suggested_type and suggested_type in available_types:
-        # 有推荐类型，让用户确认
+    # 如果有推荐类型，直接使用
+    if suggested_type:
         use_suggested = ui.prompt_confirm(
             f"检测到类型: {suggested_type}，是否使用？",
             default=True
@@ -246,10 +251,21 @@ def cmd_download_interactive(url: str) -> None:
         if use_suggested:
             final_type = suggested_type
         else:
-            final_type = ui.prompt_select("选择模型类型", available_types)
+            # 让用户输入或选择
+            if available_types:
+                final_type = ui.prompt_select("选择模型类型", available_types + ["[输入其他]"])
+                if final_type == "[输入其他]":
+                    final_type = ui.prompt_input("输入目标目录", default="checkpoints")
+            else:
+                final_type = ui.prompt_input("输入目标目录", default="checkpoints")
     else:
-        # 无推荐，让用户选择
-        final_type = ui.prompt_select("选择模型类型", available_types)
+        # 无推荐类型
+        if available_types:
+            final_type = ui.prompt_select("选择模型类型", available_types + ["[输入其他]"])
+            if final_type == "[输入其他]":
+                final_type = ui.prompt_input("输入目标目录", default="checkpoints")
+        else:
+            final_type = ui.prompt_input("输入目标目录", default="checkpoints")
     
     # ========== Step 4: 确定子目录 ==========
     base_dir = resolve_type_to_dir(final_type)

@@ -43,7 +43,6 @@ class Artifacts:
     
     # ==================== ModelAddon ====================
     models_dir: Optional[Path] = None
-    extra_model_paths_file: Optional[Path] = None
     
     # ==================== SystemAddon ====================
     bin_dir: Optional[Path] = None

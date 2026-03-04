@@ -1,12 +1,12 @@
 """
 模型路径配置
 
-从 extra_model_paths.yaml 读取模型存储路径配置
+提供模型目录路径工具函数。
+采用软链接方案后，不再需要 extra_model_paths.yaml 配置。
 """
+import os
 from pathlib import Path
-from typing import Any, Dict, Optional, cast
-
-from src.lib.utils import load_yaml
+from typing import List
 
 
 # ============================================================
@@ -16,83 +16,54 @@ ADDON_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = ADDON_DIR.parent.parent.parent
 PRESETS_FILE = ADDON_DIR / "manifest.yaml"
 LOCK_FILE = PROJECT_ROOT / "my-comfyui-backup" / "model-lock.yaml"
-EXTRA_PATHS_FILE = ADDON_DIR / "extra_model_paths.yaml"
+
+# 与 main.py 保持一致的基础目录
+_BASE_DIR = Path("/root/autodl-tmp")
+_MODELS_DIR_NAME = "models"
 
 
 # ============================================================
 # 配置函数
 # ============================================================
-def get_extra_paths_config() -> Dict[str, Any]:
-    """从 extra_model_paths.yaml 获取配置的第一个 section"""
-    config = load_yaml(EXTRA_PATHS_FILE)
-    for section_value in config.values():
-        if isinstance(section_value, dict):
-            return cast(Dict[str, Any], section_value)
-    return {}
-
-
-# 与 main.py 保持一致的基础目录
-_BASE_DIR = Path("/root/autodl-tmp")
-_SHARED_MODELS_DIR = "shared_models"
-
-
-def get_models_base(fallback: Optional[Path] = None) -> Path:
+def get_models_base(fallback: Path | None = None) -> Path:
     """获取模型根目录。
 
     优先读取环境变量 COMFYUI_MODELS_DIR，
-    否则使用 /root/autodl-tmp/shared_models 目录。
+    否则使用 /root/autodl-tmp/models/ 目录。
     
-    注意: extra_model_paths.yaml 是模板文件，含占位符 __BASE_PATH__，
-    不能直接读取其 base_path 值。实际路径由 plugin.py 在运行时渲染。
+    采用软链接方案后，此目录与 ComfyUI/models/ 等价。
     """
-    import os
-    
     # 1. 优先使用环境变量
     env_path = os.environ.get("COMFYUI_MODELS_DIR")
     if env_path:
         return Path(env_path)
     
-    # 2. 默认使用 /root/autodl-tmp/shared_models (与 main.py BASE_DIR 一致)
-    default_path = _BASE_DIR / _SHARED_MODELS_DIR
-    return default_path
+    # 2. 默认使用 /root/autodl-tmp/models/ (与 main.py BASE_DIR 一致)
+    return _BASE_DIR / _MODELS_DIR_NAME
 
 
-def get_type_dir_mapping() -> Dict[str, str]:
-    """从 extra_model_paths.yaml 获取 类型 -> 目录 映射"""
-    section = get_extra_paths_config()
-    mapping: Dict[str, str] = {}
-    for key, value in section.items():
-        if key == "base_path":
-            continue
-        if isinstance(value, str):
-            mapping[key] = value.rstrip("/")
-    return mapping
+def get_available_types() -> List[str]:
+    """获取可用的模型类型（扫描实际目录结构）
+    
+    Returns:
+        模型目录下的子目录名列表，如 ["checkpoints", "loras", "LLM", ...]
+    """
+    base = get_models_base()
+    if not base.exists():
+        return []
+    return sorted([d.name for d in base.iterdir() if d.is_dir() and not d.name.startswith(".")])
 
 
 def resolve_type_to_dir(type_or_path: str) -> str:
     """将类型名或路径解析为目标目录
     
+    采用软链接方案后，直接返回输入（路径透传）。
+    用户可以使用任意子目录路径，如 "LLM/Qwen-VL"。
+    
     Args:
-        type_or_path: 类型名 (如 "lora") 或子路径 (如 "clip/flux")
+        type_or_path: 类型名 (如 "loras") 或子路径 (如 "LLM/Qwen-VL")
         
     Returns:
-        解析后的目录路径
+        原样返回输入路径
     """
-    # 如果已经是路径，直接返回
-    if "/" in type_or_path:
-        return type_or_path
-    
-    mapping = get_type_dir_mapping()
-    
-    # 精确匹配
-    if type_or_path in mapping:
-        return mapping[type_or_path]
-    
-    # 大小写不敏感匹配
-    type_lower = type_or_path.lower()
-    for key, value in mapping.items():
-        if key.lower() == type_lower:
-            return value
-    
-    # 未找到，返回原值作为目录
     return type_or_path
