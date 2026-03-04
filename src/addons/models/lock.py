@@ -95,6 +95,14 @@ def scan_models(models_base: Path) -> List[Dict[str, Any]]:
 
         stat = model_file.stat()
 
+        # 跳过 0 字节文件（通常是占位文件或损坏文件）
+        if stat.st_size == 0:
+            continue
+
+        # 跳过 ComfyUI 占位文件 (put_*_here 命名模式)
+        if model_file.name.startswith("put_") and model_file.name.endswith("_here"):
+            continue
+
         entry: Dict[str, Any] = {
             "path": rel_path,
             "size": stat.st_size,
