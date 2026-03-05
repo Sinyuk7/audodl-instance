@@ -61,7 +61,7 @@ class TorchAddon(BaseAddon):
         cfg = self.get_manifest(ctx)
         self.min_driver = cfg.get("min_driver_version", 580)
         self.min_cuda = cfg.get("min_cuda_version", 13.0)
-        self.index_url = cfg.get("index_url", "https://download.pytorch.org/whl/nightly/cu130")
+        self.index_url = cfg.get("index_url", "https://download.pytorch.org/whl/cu130")
         self.packages = cfg.get("packages", ["torch", "torchvision", "torchaudio"])
 
         logger.info(f"  -> 算力基线约束: Driver >= {self.min_driver}, CUDA >= {self.min_cuda}")
@@ -107,7 +107,7 @@ class TorchAddon(BaseAddon):
         """通过 uv 安装 PyTorch CUDA 版本"""
         logger.info("  -> 正在调用 uv 极速对齐 Torch 算力引擎...")
         
-        cmd = ["uv", "pip", "install", "--system", "--upgrade", "--pre"]
+        cmd = ["uv", "pip", "install", "--system", "--upgrade"]
         cmd.extend(self.packages)
         cmd.extend(["--index-url", self.index_url])
         

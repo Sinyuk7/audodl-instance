@@ -7,8 +7,8 @@ min_driver_version: 580
 # CUDA 最低版本要求 (用于幂等性检查)
 min_cuda_version: 13.0
 
-# PyTorch 下载源 (nightly + CUDA 13.0)
-index_url: "https://download.pytorch.org/whl/nightly/cu130"
+# PyTorch 下载源 (stable + CUDA 13.0)
+index_url: "https://download.pytorch.org/whl/cu130"
 
 # 需要安装的算力包
 packages:
