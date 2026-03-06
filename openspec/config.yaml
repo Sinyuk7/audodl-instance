@@ -1,0 +1,55 @@
+schema: spec-driven
+
+# Project Context
+# This is shown to AI when creating artifacts.
+context: |
+  ## AutoDL Instance - 云 GPU 实例自动化配置系统
+
+  ### 技术栈
+  - **语言**: Python 3.10+
+  - **架构**: Pluggy 插件系统 + Dataclass DTOs
+  - **运行环境**: AutoDL 云 GPU 实例 (Linux, CUDA)
+  - **包管理**: uv (替代 pip)
+
+  ### 核心概念
+  - **Addon**: 插件单元，继承 `BaseAddon`，实现 `setup/start/sync` 生命周期
+  - **Task**: Addon 内部的可组合任务单元，继承 `BaseTask`，通过 `TaskRunner` 执行
+  - **AppContext**: 依赖注入容器，包含 `cmd`, `state`, `artifacts`
+  - **Artifacts**: 跨插件共享的 DTO (如 `comfy_dir`, `proxy_url`)
+
+  ### 插件执行顺序
+  ```
+  SystemAddon → GitAddon → TorchAddon → ComfyAddon → UserdataAddon → NodesAddon → ModelAddon
+  ```
+
+  ### 关键目录
+  - `src/core/`: 核心抽象 (interface, task, schema, ports, adapters)
+  - `src/addons/`: 各功能插件
+  - `src/lib/`: 可复用库 (download, network, utils)
+  - `/root/autodl-tmp/`: 数据盘 (持久化)
+  - `/root/ComfyUI/`: 系统盘 (ComfyUI 安装位置)
+
+  ### 代码规范
+  - 所有函数必须有类型注解
+  - 文件头必须有 docstring
+  - 使用 `logger.info("  -> ...")` 格式日志
+  - 插件类名: `{Name}Addon`; Task 类名: `{Name}Task`
+  - 常量使用 `UPPER_SNAKE_CASE`
+
+  ### 幂等性原则
+  - setup() 方法必须幂等，通过 `ctx.state.is_completed()` 或内部检测
+  - Task 使用内部幂等：检测物理状态决定是否执行
+
+# Per-artifact rules
+rules:
+  proposal:
+    - 包含 "问题背景" 和 "解决方案" 章节
+    - 代码示例必须包含类型注解
+    - 考虑插件执行顺序依赖
+  tasks:
+    - 每个 Task 应在 5 分钟内完成
+    - 明确标注新建文件 vs 修改文件
+    - 包含验收标准 (可测试的条件)
+  specs:
+    - 使用中文描述，代码/术语保持英文
+    - 包含示例代码片段

@@ -2,14 +2,36 @@
 Torch Engine Addon - PyTorch CUDA 环境装配
 """
 import sys
+from typing import List
 
 from src.core.interface import BaseAddon, AppContext, hookimpl
+from src.core.task import BaseTask, TaskRunner
 from src.core.utils import logger
+from src.addons.torch_engine.tasks import FixCudaDependencyChainTask
 
 
 class TorchAddon(BaseAddon):
     module_dir = "torch_engine"
 
+    # ── 任务声明 ──
+    def get_tasks(self, phase: str) -> List[BaseTask]:
+        """
+        返回当前阶段的任务列表
+        
+        Args:
+            phase: 生命周期阶段 (setup|start|sync)
+            
+        Returns:
+            任务列表 (按 priority 排序后执行)
+        """
+        if phase == "setup":
+            return [
+                FixCudaDependencyChainTask(),
+                # 未来可添加更多 setup 阶段任务
+            ]
+        return []
+
+    # ── 私有方法 ──
     def _get_torch_cuda_info(self, ctx: AppContext) -> str:
         """获取当前 Torch 的版本和 CUDA 信息用于调试"""
         check_script = (
@@ -56,6 +78,16 @@ class TorchAddon(BaseAddon):
     def setup(self, context: AppContext) -> None:
         logger.info("\n>>> [Torch Engine] 开始装配底层算力引擎...")
         ctx = context
+
+        # 0. 执行前置任务 (环境修复等)
+        tasks = self.get_tasks("setup")
+        if tasks:
+            results = TaskRunner.run_tasks(tasks, ctx)
+            # 检查是否有任务失败
+            from src.core.task import TaskResult
+            if TaskResult.FAILED in results.values():
+                failed_tasks = [name for name, r in results.items() if r == TaskResult.FAILED]
+                logger.warning(f"  -> [WARN] 部分任务执行失败: {failed_tasks}")
 
         # 1. 提取配置 (从 manifest.yaml)
         cfg = self.get_manifest(ctx)

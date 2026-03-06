@@ -3,12 +3,15 @@
 """
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import pluggy
 
 from src.core.ports import ICommandRunner, IStateManager
 from src.core.artifacts import Artifacts
+
+if TYPE_CHECKING:
+    from src.core.task import BaseTask
 
 
 hookspec = pluggy.HookspecMarker("autodl_env")
@@ -78,6 +81,21 @@ class BaseAddon:
     def get_addon_dir(self, context: AppContext) -> Path:
         """获取当前插件的目录路径"""
         return context.project_root / "src" / "addons" / self.name
+
+    def get_tasks(self, phase: str) -> List["BaseTask"]:
+        """
+        获取指定阶段的 Task 列表
+        
+        子类可重写此方法返回该阶段需要执行的 Task。
+        默认返回空列表，保持向后兼容。
+        
+        Args:
+            phase: 生命周期阶段 ("setup" | "start" | "sync")
+            
+        Returns:
+            该阶段需要执行的 Task 列表
+        """
+        return []
 
     @hookspec
     def setup(self, context: AppContext) -> None:
