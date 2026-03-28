@@ -1,6 +1,5 @@
-"""TorchAddon 单元测试"""
+"""Unit tests for TorchAddon."""
 import sys
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -11,54 +10,65 @@ from src.core.ports import CommandResult
 
 
 class TestSetup:
-    """setup 钩子测试"""
+    """Tests for the setup hook."""
 
-    def test_skip_when_cuda_ready(
-        self, app_context: AppContext, mock_runner
-    ):
-        """CUDA 已就绪时应跳过安装，设置 artifacts"""
+    def test_passes_addon_name_to_task_runner(self, app_context: AppContext):
+        addon = TorchAddon()
+
+        with patch("src.addons.torch_engine.plugin.TaskRunner.run_tasks", return_value=True) as run_tasks:
+            with patch.object(addon, "_is_torch_cuda_ready", return_value=True):
+                with patch.object(addon, "_get_torch_cuda_info", return_value="torch=2.6.0"):
+                    addon.setup(app_context)
+
+        run_tasks.assert_called_once()
+        assert run_tasks.call_args.args[2] == addon.name
+
+    def test_skip_when_cuda_ready(self, app_context: AppContext, mock_runner):
         mock_runner.stub_results[f"{sys.executable} -c"] = CommandResult(
-            returncode=0, stdout="torch=2.6.0, cuda_raw='13.0'", stderr="",
+            returncode=0,
+            stdout="torch=2.6.0, cuda_raw='13.0'",
+            stderr="",
             command=f"{sys.executable} -c",
         )
 
         addon = TorchAddon()
         addon.setup(app_context)
 
-        # 不应调用安装命令
         mock_runner.assert_not_called_with("uv pip install")
-        # 验证 artifacts
         assert app_context.artifacts.torch_installed is True
 
-    def test_installs_when_cuda_not_ready(
-        self, app_context: AppContext, mock_runner
-    ):
-        """CUDA 未就绪时应执行安装"""
-        # 模拟 CUDA 未就绪
+    def test_installs_when_cuda_not_ready(self, app_context: AppContext, mock_runner):
         mock_runner.stub_results[f"{sys.executable} -c"] = CommandResult(
-            returncode=1, stdout="", stderr="", command=f"{sys.executable} -c",
+            returncode=1,
+            stdout="",
+            stderr="",
+            command=f"{sys.executable} -c",
         )
-        # 模拟驱动版本满足要求
         mock_runner.stub_results["nvidia-smi"] = CommandResult(
-            returncode=0, stdout="580.42.01", stderr="", command="nvidia-smi",
+            returncode=0,
+            stdout="580.42.01",
+            stderr="",
+            command="nvidia-smi",
         )
 
         addon = TorchAddon()
         addon.setup(app_context)
 
-        # 应调用安装命令
         mock_runner.assert_called_with("uv pip install")
         assert app_context.artifacts.torch_installed is True
 
-    def test_exits_when_driver_insufficient(
-        self, app_context: AppContext, mock_runner
-    ):
-        """驱动版本不足时应退出"""
+    def test_exits_when_driver_insufficient(self, app_context: AppContext, mock_runner):
         mock_runner.stub_results[f"{sys.executable} -c"] = CommandResult(
-            returncode=1, stdout="", stderr="", command=f"{sys.executable} -c",
+            returncode=1,
+            stdout="",
+            stderr="",
+            command=f"{sys.executable} -c",
         )
         mock_runner.stub_results["nvidia-smi"] = CommandResult(
-            returncode=0, stdout="470.82.01", stderr="", command="nvidia-smi",
+            returncode=0,
+            stdout="470.82.01",
+            stderr="",
+            command="nvidia-smi",
         )
 
         addon = TorchAddon()
@@ -68,10 +78,7 @@ class TestSetup:
 
         assert excinfo.value.code == 1
 
-    def test_reads_manifest_config(
-        self, app_context: AppContext, mock_runner
-    ):
-        """应从 manifest 读取配置"""
+    def test_reads_manifest_config(self, app_context: AppContext, mock_runner):
         app_context.addon_manifests["torch_engine"] = {
             "min_driver_version": 600,
             "min_cuda_version": 14.0,
@@ -79,7 +86,10 @@ class TestSetup:
             "packages": ["torch-custom"],
         }
         mock_runner.stub_results[f"{sys.executable} -c"] = CommandResult(
-            returncode=0, stdout="", stderr="", command=f"{sys.executable} -c",
+            returncode=0,
+            stdout="",
+            stderr="",
+            command=f"{sys.executable} -c",
         )
 
         addon = TorchAddon()
@@ -91,18 +101,16 @@ class TestSetup:
 
 
 class TestStart:
-    """start 钩子测试"""
+    """Tests for the start hook."""
 
     def test_start_does_nothing(self, app_context: AppContext):
-        """start 为空实现"""
         addon = TorchAddon()
-        addon.start(app_context)  # 不应抛出异常
+        addon.start(app_context)
 
 
 class TestSync:
-    """sync 钩子测试"""
+    """Tests for the sync hook."""
 
     def test_sync_does_nothing(self, app_context: AppContext):
-        """sync 为空实现"""
         addon = TorchAddon()
-        addon.sync(app_context)  # 不应抛出异常
+        addon.sync(app_context)
