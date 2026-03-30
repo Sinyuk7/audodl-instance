@@ -82,6 +82,132 @@ def run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def git_output(result: subprocess.CompletedProcess[str]) -> str:
+    """Return stderr first, then stdout for concise error reporting."""
+    return result.stderr.strip() or result.stdout.strip()
+
+
+def has_any_repo_changes(repo_dir: Path) -> bool:
+    """Check whether the repo has any staged/unstaged/untracked changes."""
+    status = run_git(["status", "--porcelain"], repo_dir)
+    if status.returncode != 0:
+        raise RuntimeError(f"git status failed: {git_output(status)}")
+    return bool(status.stdout.strip())
+
+
+def has_tracking_branch(repo_dir: Path) -> bool:
+    """Return True if the current branch tracks an upstream branch."""
+    upstream = run_git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], repo_dir)
+    return upstream.returncode == 0
+
+
+def is_rebase_in_progress(repo_dir: Path) -> bool:
+    """Detect whether git rebase is currently in progress."""
+    git_dir = repo_dir / ".git"
+    return (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
+
+
+def abort_rebase(repo_dir: Path) -> None:
+    """Abort rebase when repository is left in an in-progress state."""
+    if not is_rebase_in_progress(repo_dir):
+        return
+    abort = run_git(["rebase", "--abort"], repo_dir)
+    if abort.returncode != 0:
+        raise RuntimeError(f"git rebase --abort failed: {git_output(abort)}")
+
+
+def stash_local_changes(repo_dir: Path, reason: str) -> bool:
+    """Stash local changes and return whether a new stash entry was created."""
+    stash = run_git(["stash", "push", "-u", "-m", reason], repo_dir)
+    if stash.returncode != 0:
+        raise RuntimeError(f"git stash failed: {git_output(stash)}")
+    return "No local changes to save" not in stash.stdout
+
+
+def restore_stash(repo_dir: Path) -> None:
+    """Try restoring the latest stash entry, warn when conflicts occur."""
+    pop = run_git(["stash", "pop"], repo_dir)
+    if pop.returncode != 0:
+        print(f"Warning: git stash pop failed, stash entry was kept for manual recovery: {git_output(pop)}")
+
+
+def pull_remote_updates(repo_dir: Path) -> None:
+    """Pull latest updates from upstream, with merge fallback when rebase fails."""
+    if not has_tracking_branch(repo_dir):
+        print("Current branch has no upstream; skipping pre-sync pull")
+        return
+
+    pull_rebase = run_git(["pull", "--rebase"], repo_dir)
+    if pull_rebase.returncode == 0:
+        return
+
+    rebase_error = git_output(pull_rebase)
+    abort_rebase(repo_dir)
+
+    pull_merge = run_git(["pull", "--no-rebase", "--no-edit"], repo_dir)
+    if pull_merge.returncode == 0:
+        print("git pull --rebase failed; recovered with merge pull")
+        return
+
+    raise RuntimeError(
+        "git pull failed (rebase + merge fallback): "
+        f"{rebase_error}; {git_output(pull_merge)}"
+    )
+
+
+def sync_repo_with_remote(repo_dir: Path, reason: str) -> None:
+    """Safely sync repo with upstream while preserving local uncommitted changes."""
+    stashed = False
+    if has_any_repo_changes(repo_dir):
+        stashed = stash_local_changes(repo_dir, reason)
+        if stashed:
+            print("Stashed local changes before pulling remote updates")
+
+    try:
+        pull_remote_updates(repo_dir)
+    finally:
+        if stashed:
+            restore_stash(repo_dir)
+
+
+def get_default_remote(repo_dir: Path) -> str:
+    """Get the first configured git remote name."""
+    remote = run_git(["remote"], repo_dir)
+    if remote.returncode != 0:
+        raise RuntimeError(f"git remote failed: {git_output(remote)}")
+    for line in remote.stdout.splitlines():
+        name = line.strip()
+        if name:
+            return name
+    return ""
+
+
+def push_current_branch(repo_dir: Path) -> subprocess.CompletedProcess[str]:
+    """Push current branch; auto-set upstream when missing."""
+    push = run_git(["push"], repo_dir)
+    if push.returncode == 0:
+        return push
+
+    text = f"{push.stdout}\n{push.stderr}".lower()
+    if "no upstream branch" in text or "set upstream" in text:
+        remote = get_default_remote(repo_dir)
+        if not remote:
+            return push
+        return run_git(["push", "-u", remote, "HEAD"], repo_dir)
+    return push
+
+
+def should_retry_push_with_sync(output: str) -> bool:
+    """Detect push failures likely caused by remote divergence."""
+    text = output.lower()
+    return (
+        "non-fast-forward" in text
+        or "fetch first" in text
+        or "failed to push some refs" in text
+        or "[rejected]" in text
+    )
+
+
 def ensure_backup_repo(repo_dir: Path, repo_url: str) -> None:
     """Make sure the backup directory is a git clone of the configured repo."""
     if (repo_dir / ".git").exists():
@@ -107,7 +233,7 @@ def ensure_backup_repo(repo_dir: Path, repo_url: str) -> None:
         check=False,
     )
     if clone.returncode != 0:
-        raise RuntimeError(f"git clone failed: {clone.stderr.strip() or clone.stdout.strip()}")
+        raise RuntimeError(f"git clone failed: {git_output(clone)}")
 
 
 def write_active_profile(profile: ActiveProfile, repo_dir: Path) -> Path:
@@ -122,7 +248,7 @@ def has_staged_or_worktree_changes(repo_dir: Path, target: Path) -> bool:
     """Check whether the target file differs in the git worktree."""
     status = run_git(["status", "--porcelain", "--", str(target.relative_to(repo_dir))], repo_dir)
     if status.returncode != 0:
-        raise RuntimeError(f"git status failed: {status.stderr.strip() or status.stdout.strip()}")
+        raise RuntimeError(f"git status failed: {git_output(status)}")
     return bool(status.stdout.strip())
 
 
@@ -131,21 +257,33 @@ def commit_and_push(repo_dir: Path, target: Path, message: str) -> bool:
     relative_target = str(target.relative_to(repo_dir))
     add = run_git(["add", "--", relative_target], repo_dir)
     if add.returncode != 0:
-        raise RuntimeError(f"git add failed: {add.stderr.strip() or add.stdout.strip()}")
+        raise RuntimeError(f"git add failed: {git_output(add)}")
 
     diff = run_git(["diff", "--cached", "--quiet", "--", relative_target], repo_dir)
     if diff.returncode == 0:
         return False
     if diff.returncode not in (0, 1):
-        raise RuntimeError(f"git diff failed: {diff.stderr.strip() or diff.stdout.strip()}")
+        raise RuntimeError(f"git diff failed: {git_output(diff)}")
 
     commit = run_git(["commit", "-m", message, "--", relative_target], repo_dir)
     if commit.returncode != 0:
-        raise RuntimeError(f"git commit failed: {commit.stderr.strip() or commit.stdout.strip()}")
+        raise RuntimeError(f"git commit failed: {git_output(commit)}")
 
-    push = run_git(["push"], repo_dir)
+    push = push_current_branch(repo_dir)
+    if push.returncode == 0:
+        return True
+
+    push_error = git_output(push)
+    if should_retry_push_with_sync(push_error):
+        print("Push was rejected by remote changes; pulling latest and retrying push")
+        sync_repo_with_remote(repo_dir, reason="sync-clash pre-push reconcile")
+        retry = push_current_branch(repo_dir)
+        if retry.returncode == 0:
+            return True
+        raise RuntimeError(f"git push failed after retry: {git_output(retry)}")
+
     if push.returncode != 0:
-        raise RuntimeError(f"git push failed: {push.stderr.strip() or push.stdout.strip()}")
+        raise RuntimeError(f"git push failed: {push_error}")
     return True
 
 
@@ -204,6 +342,8 @@ def main() -> int:
 
     print(f"Active Clash profile: {profile.name} ({profile.file_name})")
     ensure_backup_repo(repo_dir, repo_url)
+    if not args.no_push:
+        sync_repo_with_remote(repo_dir, reason="sync-clash preflight")
     target = write_active_profile(profile, repo_dir)
     print(f"Updated {target}")
 
